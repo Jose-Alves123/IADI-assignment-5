@@ -1,9 +1,9 @@
 package pt.unl.fct.iadi.bookstore.service
 
+import java.util.UUID
 import org.springframework.stereotype.Service
 import pt.unl.fct.iadi.bookstore.domain.Book
 import pt.unl.fct.iadi.bookstore.domain.Review
-import java.util.UUID
 
 @Service
 class BookstoreService {
@@ -11,7 +11,7 @@ class BookstoreService {
     private val books: MutableMap<String, Book> = mutableMapOf()
     private val reviewsByBookIsbn: MutableMap<String, MutableList<Review>> = mutableMapOf()
 
-    fun createBook(book: Book)  {
+    fun createBook(book: Book) {
         if (books.containsKey(book.isbn)) {
             throw BookAlreadyExistsException(book.isbn)
         }
@@ -19,12 +19,16 @@ class BookstoreService {
         books[book.isbn] = book
     }
 
-    fun getBook(isbn : String): Book {
+    fun getBook(isbn: String): Book {
         return books[isbn] ?: throw BookNotFoundException(isbn)
     }
 
     fun getAllBooks(): List<Book> {
         return books.values.toList()
+    }
+
+    fun findReview(isbn: String, reviewId: UUID): Review? {
+        return reviewsByBookIsbn[isbn]?.firstOrNull { it.id == reviewId }
     }
 
     fun replaceBook(isbn: String, book: Book): Boolean {
@@ -34,19 +38,20 @@ class BookstoreService {
     }
 
     fun updateBookPartially(
-        isbn: String,
-        title: String?,
-        author: String?,
-        price: Double?,
-        image: String?
+            isbn: String,
+            title: String?,
+            author: String?,
+            price: Double?,
+            image: String?
     ): Book {
         val existing = getBook(isbn)
-        val updated = existing.copy(
-            title = title ?: existing.title,
-            author = author ?: existing.author,
-            price = price ?: existing.price,
-            image = image ?: existing.image
-        )
+        val updated =
+                existing.copy(
+                        title = title ?: existing.title,
+                        author = author ?: existing.author,
+                        price = price ?: existing.price,
+                        image = image ?: existing.image
+                )
 
         books[isbn] = updated
         return updated
@@ -65,9 +70,10 @@ class BookstoreService {
         return reviewsByBookIsbn[isbn]?.toList() ?: emptyList()
     }
 
-    fun createReview(isbn: String, rating: Int, comment: String?): Review {
+    fun createReview(isbn: String, rating: Int, comment: String?, author: String): Review {
         getBook(isbn)
-        val review = Review(id = UUID.randomUUID(), rating = rating, comment = comment)
+        val review =
+                Review(id = UUID.randomUUID(), rating = rating, comment = comment, author = author)
         reviewsByBookIsbn.getOrPut(isbn) { mutableListOf() }.add(review)
         return review
     }
@@ -80,7 +86,13 @@ class BookstoreService {
             throw ReviewNotFoundException(isbn, reviewId)
         }
 
-        val updated = Review(id = reviewId, rating = rating, comment = comment)
+        val updated =
+                Review(
+                        id = reviewId,
+                        rating = rating,
+                        comment = comment,
+                        author = reviews[index].author
+                )
         reviews[index] = updated
         return updated
     }
@@ -94,10 +106,11 @@ class BookstoreService {
         }
 
         val existing = reviews[index]
-        val updated = existing.copy(
-            rating = rating ?: existing.rating,
-            comment = comment ?: existing.comment
-        )
+        val updated =
+                existing.copy(
+                        rating = rating ?: existing.rating,
+                        comment = comment ?: existing.comment
+                )
         reviews[index] = updated
         return updated
     }

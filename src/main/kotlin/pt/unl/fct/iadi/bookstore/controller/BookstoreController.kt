@@ -2,10 +2,13 @@ package pt.unl.fct.iadi.bookstore.controller
 
 import jakarta.validation.Valid
 import java.util.Locale
+import java.util.UUID
 import org.springframework.context.MessageSource
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.security.access.prepost.PreAuthorize
+import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestBody
@@ -20,14 +23,14 @@ import pt.unl.fct.iadi.bookstore.controller.dto.UpdateBookPatchRequest
 import pt.unl.fct.iadi.bookstore.controller.dto.UpdateReviewPatchRequest
 import pt.unl.fct.iadi.bookstore.service.BookNotFoundException
 import pt.unl.fct.iadi.bookstore.service.BookstoreService
-import java.util.UUID
 
 @RestController
 class BookstoreController(
-    private val service: BookstoreService,
-    private val messageSource: MessageSource
+        private val service: BookstoreService,
+        private val messageSource: MessageSource
 ) : BookstoreAPI {
 
+    @PreAuthorize("hasAnyRole('EDITOR', 'ADMIN')")
     override fun bookstoreAdd(@Valid @RequestBody book: CreateBookRequest): ResponseEntity<Void> {
         service.createBook(book.toBook())
         val location =
@@ -39,6 +42,7 @@ class BookstoreController(
         return ResponseEntity.created(location).build()
     }
 
+    @PreAuthorize("hasAnyRole('EDITOR', 'ADMIN')")
     override fun bookstoreUpdate(
             @PathVariable isbn: String,
             @Valid @RequestBody book: CreateBookRequest
@@ -55,7 +59,7 @@ class BookstoreController(
                         .path("/{isbn}")
                         .buildAndExpand(book.isbn)
                         .toUri()
-                        
+
         return if (wasCreated) {
             ResponseEntity.created(location).body(response)
         } else {
@@ -63,6 +67,7 @@ class BookstoreController(
         }
     }
 
+    @PreAuthorize("hasAnyRole('EDITOR', 'ADMIN')")
     override fun bookstorePatch(
             @PathVariable isbn: String,
             @Valid @RequestBody book: UpdateBookPatchRequest
@@ -79,6 +84,7 @@ class BookstoreController(
         return ResponseEntity.ok(GetBookResponse.fromBook(updated))
     }
 
+    @PreAuthorize("hasRole('ADMIN')")
     override fun bookstoreRemove(@PathVariable isbn: String): ResponseEntity<Void> {
         service.deleteBook(isbn)
         return ResponseEntity.noContent().build()
@@ -94,46 +100,53 @@ class BookstoreController(
         return ResponseEntity.ok<List<GetBookResponse>>(bookResponses)
     }
 
-    override fun bookstoreGetReviews(@PathVariable isbn: String): ResponseEntity<List<GetReviewResponse>> {
+    override fun bookstoreGetReviews(
+            @PathVariable isbn: String
+    ): ResponseEntity<List<GetReviewResponse>> {
         val reviews = service.getReviews(isbn).map { GetReviewResponse.fromReview(it) }
         return ResponseEntity.ok(reviews)
     }
 
+    @PreAuthorize("hasAnyRole('EDITOR', 'ADMIN')")
     override fun bookstoreAddReview(
-        @PathVariable isbn: String,
-        @Valid @RequestBody review: CreateReviewRequest
+            @PathVariable isbn: String,
+            @Valid @RequestBody review: CreateReviewRequest
     ): ResponseEntity<Void> {
-        val created = service.createReview(isbn, review.rating, review.comment)
+        val principalName = SecurityContextHolder.getContext().authentication?.name ?: "anonymous"
+        val created = service.createReview(isbn, review.rating, review.comment, principalName)
         val location =
-            ServletUriComponentsBuilder.fromCurrentRequest()
-                .path("/{reviewId}")
-                .buildAndExpand(created.id)
-                .toUri()
+                ServletUriComponentsBuilder.fromCurrentRequest()
+                        .path("/{reviewId}")
+                        .buildAndExpand(created.id)
+                        .toUri()
 
         return ResponseEntity.created(location).build()
     }
 
+    @PreAuthorize("@reviewAccess.canEditReview(#isbn, #reviewId, authentication)")
     override fun bookstoreReplaceReview(
-        @PathVariable isbn: String,
-        @PathVariable reviewId: UUID,
-        @Valid @RequestBody review: CreateReviewRequest
+            @PathVariable isbn: String,
+            @PathVariable reviewId: UUID,
+            @Valid @RequestBody review: CreateReviewRequest
     ): ResponseEntity<GetReviewResponse> {
         val replaced = service.replaceReview(isbn, reviewId, review.rating, review.comment)
         return ResponseEntity.ok(GetReviewResponse.fromReview(replaced))
     }
 
+    @PreAuthorize("@reviewAccess.canEditReview(#isbn, #reviewId, authentication)")
     override fun bookstorePatchReview(
-        @PathVariable isbn: String,
-        @PathVariable reviewId: UUID,
-        @Valid @RequestBody review: UpdateReviewPatchRequest
+            @PathVariable isbn: String,
+            @PathVariable reviewId: UUID,
+            @Valid @RequestBody review: UpdateReviewPatchRequest
     ): ResponseEntity<GetReviewResponse> {
         val patched = service.patchReview(isbn, reviewId, review.rating, review.comment)
         return ResponseEntity.ok(GetReviewResponse.fromReview(patched))
     }
 
+    @PreAuthorize("@reviewAccess.canDeleteReview(#isbn, #reviewId, authentication)")
     override fun bookstoreDeleteReview(
-        @PathVariable isbn: String,
-        @PathVariable reviewId: UUID
+            @PathVariable isbn: String,
+            @PathVariable reviewId: UUID
     ): ResponseEntity<Void> {
         service.deleteReview(isbn, reviewId)
         return ResponseEntity.noContent().build()
@@ -141,24 +154,21 @@ class BookstoreController(
 
     @ExceptionHandler(BookNotFoundException::class)
     fun handleBookNotFoundInController(
-        ex: BookNotFoundException,
-        locale: Locale
+            ex: BookNotFoundException,
+            locale: Locale
     ): ResponseEntity<ErrorResponse> {
-        val responseLocale = if (locale.language.equals("pt", ignoreCase = true)) {
-            Locale.forLanguageTag("pt")
-        } else {
-            Locale.ENGLISH
-        }
+        val responseLocale =
+                if (locale.language.equals("pt", ignoreCase = true)) {
+                    Locale.forLanguageTag("pt")
+                } else {
+                    Locale.ENGLISH
+                }
 
-        val message = messageSource.getMessage(
-            "error.book.notFound",
-            arrayOf(ex.isbn),
-            responseLocale
-        )
+        val message =
+                messageSource.getMessage("error.book.notFound", arrayOf(ex.isbn), responseLocale)
 
-        return ResponseEntity
-            .status(HttpStatus.NOT_FOUND)
-            .header(HttpHeaders.CONTENT_LANGUAGE, responseLocale.language)
-            .body(ErrorResponse("NOT_FOUND", message))
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .header(HttpHeaders.CONTENT_LANGUAGE, responseLocale.language)
+                .body(ErrorResponse("NOT_FOUND", message))
     }
 }
